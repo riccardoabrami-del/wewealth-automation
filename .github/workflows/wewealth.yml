@@ -1,16 +1,3 @@
-name: WeWealth Automation
-
-on:
-  workflow_dispatch:
-    inputs:
-      headless:
-        description: "Esegui in headless mode"
-        required: true
-        default: true
-        type: boolean
-  schedule:
-    - cron: "0 7 * * *"
-
 jobs:
   run-automation:
     runs-on: ubuntu-latest
@@ -20,6 +7,7 @@ jobs:
       HEADLESS: ${{ inputs.headless }}
       EMAIL_USER: ${{ secrets.EMAIL_USER }}
       EMAIL_USER_PASSWORD: ${{ secrets.EMAIL_USER_PASSWORD }}
+      EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -46,5 +34,7 @@ jobs:
           name: debug-artifacts
           path: |
             *.png
+            *.html
+          if-no-files-found: ignore
             *.html
           if-no-files-found: ignore
