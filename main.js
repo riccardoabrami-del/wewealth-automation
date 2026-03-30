@@ -13,9 +13,15 @@ function generaEmailWeWealth() {
 }
 
 async function saveDebug(page, name) {
-  await page.screenshot({ path: `${name}.png`, fullPage: true }).catch(() => {});
-  const html = await page.content().catch(() => '');
-  fs.writeFileSync(`${name}.html`, html || '', 'utf8');
+  try {
+    await page.screenshot({ path: `${name}.png`, fullPage: true });
+  } catch (_) {}
+  try {
+    const html = await page.content();
+    fs.writeFileSync(`${name}.html`, html || '', 'utf8');
+  } catch (_) {
+    fs.writeFileSync(`${name}.html`, '', 'utf8');
+  }
   console.log(`Debug salvato: ${name}.png / ${name}.html`);
 }
 
@@ -35,7 +41,7 @@ async function jsClick(page, selector) {
 function getAppPassword() {
   const appPassword =
     process.env.EMAIL_APP_PASSWORD ||
-    process.env.EMAIL_USER_PASSWORD || // fallback se hai già questo secret
+    process.env.EMAIL_USER_PASSWORD ||
     '';
 
   if (!appPassword) {
@@ -45,6 +51,47 @@ function getAppPassword() {
     );
   }
   return appPassword;
+}
+
+// Chiude eventuale tour/benvenuto Gmail o altre schermate intermedie
+async function handleGmailIntersticials(page) {
+  // A volte Gmail mostra un pulsante "Avanti", "OK", "Capito" o simile
+  const possibleButtons = [
+    'button:has-text("Avanti")',
+    'button:has-text("OK")',
+    'button:has-text("Capito")',
+    'button:has-text("Inizia")'
+  ];
+
+  for (const sel of possibleButtons) {
+    const btn = page.locator(sel);
+    if (await btn.count()) {
+      try {
+        await btn.first().click({ timeout: 2000 });
+        await wait(2000);
+        await saveDebug(page, 'debug-gmail-interstitial-dismissed');
+      } catch (_) {}
+    }
+  }
+}
+
+// Trova la prima riga email in inbox in modo più robusto
+async function getFirstInboxRow(page) {
+  // Layout classico
+  let row = page.locator('tr.zA').first();
+  if (await row.count()) {
+    return row;
+  }
+
+  // Layout alternativo / modalità compatta
+  row = page.locator('tr[role="row"]:has(td[role="gridcell"])').first();
+  if (await row.count()) {
+    return row;
+  }
+
+  // Fallback generico: qualsiasi riga cliccabile nella tabella principale
+  row = page.locator('table[role="grid"] tr[role="row"]').first();
+  return row;
 }
 
 async function readOtpFromGmail(appPassword) {
@@ -65,40 +112,44 @@ async function readOtpFromGmail(appPassword) {
     await saveDebug(gmailPage, 'debug-gmail-01-landing');
 
     // Email
-    await gmailPage.locator('input[type="email"]').waitFor({ state: 'visible', timeout: 15000 });
+    await gmailPage.locator('input[type="email"]').waitFor({ state: 'visible', timeout: 20000 });
     await gmailPage.locator('input[type="email"]').fill('riccardo.abrami@we-wealth.com');
     await wait(1000);
     await gmailPage.locator('#identifierNext').click();
     console.log('[Gmail] Email inserita, avanzamento...');
-    await wait(3000);
+    await wait(4000);
     await saveDebug(gmailPage, 'debug-gmail-02-after-email');
 
     // Password (app password)
-    await gmailPage.locator('input[type="password"]').waitFor({ state: 'visible', timeout: 15000 });
+    await gmailPage.locator('input[type="password"]').waitFor({ state: 'visible', timeout: 20000 });
     await gmailPage.locator('input[type="password"]').fill(appPassword);
     await wait(1000);
     await gmailPage.locator('#passwordNext').click();
     console.log('[Gmail] App password inserita, accesso in corso...');
-    await wait(5000);
+    await wait(6000);
     await saveDebug(gmailPage, 'debug-gmail-03-after-password');
 
-    // Inbox
+    // Attendi inbox o schermata principale
     await gmailPage.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await wait(4000);
+
+    await handleGmailIntersticials(gmailPage);
+
+    // Assicurati di essere in qualche vista di posta
+    await gmailPage.waitForTimeout(3000);
     await saveDebug(gmailPage, 'debug-gmail-04-inbox');
 
-    // Prima email
-    const emailThread = gmailPage.locator('tr.zA').first();
-    await emailThread.waitFor({ state: 'visible', timeout: 20000 });
-    await emailThread.click();
+    // Trova la prima riga email
+    const emailRow = await getFirstInboxRow(gmailPage);
+    await emailRow.waitFor({ state: 'visible', timeout: 40000 });
+    await emailRow.click();
     console.log('[Gmail] Apertura email più recente...');
-    await wait(3000);
+    await wait(4000);
     await saveDebug(gmailPage, 'debug-gmail-05-email-open');
 
-    const emailBody = await gmailPage
-      .locator('.a3s.aiL')
-      .first()
-      .innerText({ timeout: 10000 });
+    // Corpo email
+    const emailBodyLocator = gmailPage.locator('.a3s.aiL, div[data-message-id] .a3s').first();
+    const emailBody = await emailBodyLocator.innerText({ timeout: 20000 });
 
     console.log('[Gmail] Corpo email (primi 300 chars):', emailBody.substring(0, 300));
 
