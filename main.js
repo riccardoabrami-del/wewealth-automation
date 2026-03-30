@@ -115,6 +115,46 @@ async function main() {
   } finally {
     await browser.close();
   }
+
+const { ImapFlow } = require('imapflow');
+
+async function main() {
+  const client = new ImapFlow({
+    host: 'imap.gmail.com',
+    port: 993,
+    secure: true,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_USER_PASSWORD,
+    },
+    logger: false
+  });
+
+  try {
+    await client.connect();
+    console.log('Accesso IMAP riuscito.');
+
+    const lock = await client.getMailboxLock('INBOX');
+    try {
+      console.log('INBOX aperta correttamente.');
+    } finally {
+      lock.release();
+    }
+
+    await client.logout();
+    console.log('Disconnessione completata.');
+  } catch (error) {
+    console.error('Errore durante accesso email:', error);
+    process.exitCode = 1;
+  }
+}
+
+main();
+
+
+
+
+
 }
 
 main();
