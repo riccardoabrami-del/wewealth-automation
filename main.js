@@ -1,4 +1,5 @@
-const { chromium } = require('playwright');
+const { chromium, devices } = require('playwright');
+const fs = require('fs');
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -11,87 +12,180 @@ function generaEmailWeWealth() {
   return `riccardo.abrami+${n1}${n2}${n3}@we-wealth.com`;
 }
 
-async function clickIfVisible(page, selectors, timeout = 5000) {
+async function saveDebug(page, name) {
+  await page.screenshot({ path: `${name}.png`, fullPage: true }).catch(() => {});
+  const html = await page.content().catch(() => '');
+  fs.writeFileSync(`${name}.html`, html || '', 'utf8');
+  console.log(`Debug salvato: ${name}.png / ${name}.html`);
+}
+
+async function logCandidates(page) {
+  const links = await page.locator('a').evaluateAll(els =>
+    els.slice(0, 200).map(el => ({
+      text: (el.innerText || '').trim(),
+      cls: el.className || '',
+      href: el.getAttribute('href') || ''
+    }))
+  ).catch(() => []);
+  console.log('Primi link trovati in pagina:');
+  for (const item of links) {
+    console.log(JSON.stringify(item));
+  }
+}
+
+async function tryClick(page, selectors, timeout = 5000) {
   for (const selector of selectors) {
     try {
-      const el = page.locator(selector).first();
-      await el.waitFor({ state: 'visible', timeout });
-      await el.click({ timeout });
-      console.log(`Click eseguito su: ${selector}`);
+      const locator = page.locator(selector).first();
+      await locator.waitFor({ state: 'visible', timeout });
+      await locator.click({ timeout });
+      console.log(`Click riuscito con selector: ${selector}`);
       return true;
-    } catch (_) {}
+    } catch (e) {
+      console.log(`Selector non riuscito: ${selector}`);
+    }
+  }
+  return false;
+}
+
+async function tryClickInFrames(page, selectors, timeout = 5000) {
+  for (const frame of page.frames()) {
+    for (const selector of selectors) {
+      try {
+        const locator = frame.locator(selector).first();
+        await locator.waitFor({ state: 'visible', timeout });
+        await locator.click({ timeout });
+        console.log(`Click riuscito nel frame ${frame.url()} con selector: ${selector}`);
+        return true;
+      } catch (_) {}
+    }
   }
   return false;
 }
 
 async function main() {
-  const headless = process.env.HEADLESS !== 'false';
-  const targetUrl = process.env.TARGET_URL || 'https://www.we-wealth.com';
+  const desktop = devices['Desktop Chrome'];
 
   const browser = await chromium.launch({
-    headless
+    headless: true
   });
 
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 }
+    ...desktop,
+    viewport: { width: 1440, height: 900 },
+    locale: 'it-IT',
+    timezoneId: 'Europe/Rome'
   });
 
   const page = await context.newPage();
 
   try {
-    console.log(`Apro: ${targetUrl}`);
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    await page.goto('https://www.we-wealth.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 120000
+    });
 
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await wait(10000);
 
+    await saveDebug(page, 'debug-home');
+    await logCandidates(page);
+
     const cookieSelectors = [
+      '#onetrust-accept-btn-handler',
+      'button:has-text("Accetta")',
+      'button:has-text("Accept")',
       'button[aria-label*="Accetta"]',
       'button[aria-label*="accept"]',
       '.cookie-accept',
-      'button.accept',
-      'button:has-text("Accetta")',
-      'button:has-text("Accept")',
-      '#onetrust-accept-btn-handler'
+      'button.accept'
     ];
 
-    const cookieAccepted = await clickIfVisible(page, cookieSelectors, 4000);
-    console.log(cookieAccepted ? 'Cookie accettati.' : 'Nessun pulsante cookie trovato.');
+    const accediSelectors = [
+      'a.btn-accedi.otp-popup-button',
+      'a.otp-popup-button',
+      'a.btn-accedi',
+      'a:has-text("Accedi")',
+      'button:has-text("Accedi")',
+      'text=Accedi'
+    ];
 
-    const accediLink = page.locator('a.btn-accedi.otp-popup-button').first();
-    await accediLink.waitFor({ state: 'visible', timeout: 60000 });
-    await accediLink.click();
-    console.log('Link .btn-accedi.otp-popup-button cliccato.');
+    const preEmailSelectors = [
+      '#otp-submit-button',
+      'button:has-text("Accedi o registrati")',
+      'text="Accedi o registrati"'
+    ];
 
-    const accediRegBtn = page.locator('#otp-submit-button').first();
-    await accediRegBtn.waitFor({ state: 'visible', timeout: 60000 });
-    await accediRegBtn.click();
-    console.log('Bottone "Accedi o registrati" cliccato (fase pre-email).');
+    const inviaCodiceSelectors = [
+      '#otp-start-process',
+      'button:has-text("Invia codice via email")',
+      'text="Invia codice via email"'
+    ];
+
+    await tryClick(page, cookieSelectors, 4000);
+    await wait(2000);
+    await saveDebug(page, 'debug-after-cookie');
+
+    let clickedAccedi = await tryClick(page, accediSelectors, 10000);
+    if (!clickedAccedi) {
+      clickedAccedi = await tryClickInFrames(page, accediSelectors, 10000);
+    }
+
+    if (!clickedAccedi) {
+      throw new Error('Non sono riuscito a trovare/cliccare il pulsante Accedi');
+    }
+
+    await wait(3000);
+    await saveDebug(page, 'debug-after-accedi');
+
+    let clickedPreEmail = await tryClick(page, preEmailSelectors, 15000);
+    if (!clickedPreEmail) {
+      clickedPreEmail = await tryClickInFrames(page, preEmailSelectors, 15000);
+    }
+    if (!clickedPreEmail) {
+      console.log('Bottone pre-email non trovato, provo comunque il campo email.');
+    }
+
+    await wait(3000);
+    await saveDebug(page, 'debug-before-email');
+
+    let emailInput = page.locator('#otp-email').first();
+    let foundInFrame = false;
+
+    try {
+      await emailInput.waitFor({ state: 'visible', timeout: 15000 });
+    } catch (_) {
+      for (const frame of page.frames()) {
+        const candidate = frame.locator('#otp-email').first();
+        if (await candidate.isVisible().catch(() => false)) {
+          emailInput = candidate;
+          foundInFrame = true;
+          break;
+        }
+      }
+    }
 
     const email = generaEmailWeWealth();
     console.log(`Email generata: ${email}`);
 
-    const emailInput = page.locator('#otp-email').first();
-    await emailInput.waitFor({ state: 'visible', timeout: 60000 });
     await emailInput.fill(email);
-    await page.waitForTimeout(500);
-    const insertedValue = await emailInput.inputValue();
+    console.log(`Email inserita${foundInFrame ? ' nel frame' : ''}: ${email}`);
 
-    if (insertedValue !== email) {
-      throw new Error(`Valore email non inserito correttamente. Atteso=${email} Letto=${insertedValue}`);
+    if (!foundInFrame) {
+      const clickedInvia = await tryClick(page, inviaCodiceSelectors, 15000);
+      if (!clickedInvia) {
+        await tryClickInFrames(page, inviaCodiceSelectors, 15000);
+      }
+    } else {
+      await tryClickInFrames(page, inviaCodiceSelectors, 15000);
     }
 
-    console.log(`Email inserita in #otp-email: ${insertedValue}`);
-
-    const inviaCodiceBtn = page.locator('#otp-start-process').first();
-    await inviaCodiceBtn.waitFor({ state: 'visible', timeout: 60000 });
-    await inviaCodiceBtn.click();
-    console.log('Bottone "Invia codice via email" cliccato.');
-
-    await page.waitForTimeout(3000);
-    console.log('Script completato con successo.');
+    await wait(5000);
+    await saveDebug(page, 'debug-final');
+    console.log('Script completato.');
   } catch (error) {
     console.error('Errore durante esecuzione:', error);
-    await page.screenshot({ path: 'error-screenshot.png', fullPage: true }).catch(() => {});
+    await saveDebug(page, 'debug-error');
     process.exitCode = 1;
   } finally {
     await browser.close();
