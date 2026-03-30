@@ -19,6 +19,15 @@ async function saveDebug(page, name) {
   console.log(`Debug salvato: ${name}.png / ${name}.html`);
 }
 
+async function jsClick(page, selector) {
+  const clicked = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (el) { el.click(); return true; }
+    return false;
+  }, selector);
+  return clicked;
+}
+
 async function main() {
   const desktop = devices['Desktop Chrome'];
 
@@ -40,47 +49,42 @@ async function main() {
     });
 
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-    await wait(10000);
+    await wait(8000);
     await saveDebug(page, 'debug-home');
 
-    // Accetta cookie banner (classe specifica ww-cookiebanner)
-    const cookieSelectors = [
-      'a.ww-cookiebanner__brand--details',
-      '.ww-cookiebanner a[href="#"]',
-      '#onetrust-accept-btn-handler',
-      'button:has-text("Accetta")',
-      'button:has-text("Accept")'
-    ];
-    for (const sel of cookieSelectors) {
-      try {
-        const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await el.click({ force: true });
-          console.log(`Cookie accettati con: ${sel}`);
-          break;
-        }
-      } catch (_) {}
+    // Accetta cookie banner via JS click
+    const cookieClicked = await jsClick(page, 'a.ww-cookiebanner__brand');
+    if (cookieClicked) {
+      console.log('Cookie banner chiuso via JS.');
+    } else {
+      console.log('Cookie banner non trovato.');
     }
     await wait(2000);
     await saveDebug(page, 'debug-after-cookie');
 
-    // Clicca su Accedi - usa force:true perché l'elemento potrebbe essere nascosto nel menu collassato
-    const accediLink = page.locator('a.btn-accedi.otp-popup-button').first();
-    await accediLink.waitFor({ state: 'attached', timeout: 30000 });
-    await accediLink.click({ force: true });
-    console.log('Link Accedi cliccato (force).');
+    // Clicca su Accedi via JS (bypassa visibility)
+    const accediClicked = await jsClick(page, 'a.btn-accedi.otp-popup-button');
+    if (!accediClicked) {
+      throw new Error('Non trovato a.btn-accedi.otp-popup-button nel DOM');
+    }
+    console.log('Link Accedi cliccato via JS.');
 
     await wait(3000);
     await saveDebug(page, 'debug-after-accedi');
 
     // Clicca su #otp-submit-button
-    const preEmailBtn = page.locator('#otp-submit-button').first();
-    try {
-      await preEmailBtn.waitFor({ state: 'visible', timeout: 15000 });
-      await preEmailBtn.click();
+    const preEmailClicked = await jsClick(page, '#otp-submit-button');
+    if (preEmailClicked) {
       console.log('Bottone otp-submit-button cliccato.');
-    } catch (_) {
-      console.log('otp-submit-button non trovato, procedo.');
+    } else {
+      // Aspetta che appaia e riprova
+      try {
+        await page.locator('#otp-submit-button').waitFor({ state: 'visible', timeout: 10000 });
+        await jsClick(page, '#otp-submit-button');
+        console.log('Bottone otp-submit-button cliccato (dopo attesa).');
+      } catch (_) {
+        console.log('otp-submit-button non trovato, procedo.');
+      }
     }
 
     await wait(3000);
