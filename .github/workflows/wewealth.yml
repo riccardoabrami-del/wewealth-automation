@@ -1,9 +1,22 @@
+name: WeWealth Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      headless:
+        description: "Esegui in headless mode"
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: "0 7 * * *"
+
 jobs:
   run-automation:
     runs-on: ubuntu-latest
 
     env:
-      TARGET_URL: https://www.we-wealth.com
+      TARGET_URL: "https://www.we-wealth.com"
       HEADLESS: ${{ inputs.headless }}
       EMAIL_USER: ${{ secrets.EMAIL_USER }}
       EMAIL_USER_PASSWORD: ${{ secrets.EMAIL_USER_PASSWORD }}
@@ -34,7 +47,5 @@ jobs:
           name: debug-artifacts
           path: |
             *.png
-            *.html
-          if-no-files-found: ignore
             *.html
           if-no-files-found: ignore
