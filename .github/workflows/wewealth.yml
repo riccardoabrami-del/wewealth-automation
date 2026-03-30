@@ -37,10 +37,12 @@ jobs:
       - name: Run automation
         run: npm start
 
-      - name: Upload screenshot on failure
-        if: failure()
+      - name: Upload debug artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: error-screenshot
-          path: error-screenshot.png
+          name: debug-artifacts
+          path: |
+            *.png
+            *.html
           if-no-files-found: ignore
