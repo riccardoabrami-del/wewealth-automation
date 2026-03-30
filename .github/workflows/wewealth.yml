@@ -18,6 +18,8 @@ jobs:
     env:
       TARGET_URL: https://www.we-wealth.com
       HEADLESS: ${{ inputs.headless }}
+      EMAIL_USER: ${{ secrets.EMAIL_USER }}
+      EMAIL_USER_PASSWORD: ${{ secrets.EMAIL_USER_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -34,7 +36,7 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run automation
+      - name: Run automation (Step 1 + Step 2 OTP)
         run: npm start
 
       - name: Upload debug artifacts
@@ -46,21 +48,3 @@ jobs:
             *.png
             *.html
           if-no-files-found: ignore
-
-EMAIL_USER: ${{ secrets.email_user }}
-      EMAIL_USER_PASSWORD: ${{ secrets.email_user_password }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run email access script
-        run: npm start
