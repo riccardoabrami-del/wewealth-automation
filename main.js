@@ -104,7 +104,7 @@ async function readOtpFromGmail(browser) {
 
     // Aspetta che l’URL contenga "inbox" o che il titolo indichi Gmail
     await Promise.race([
-      page.waitForURL(/mail\\.google\\.com\\/mail\\/u\\/\\d+\\/#inbox/i, { timeout: 30000 }).catch(() => {}),
+      page.waitForURL(/mail\.google\.com\/mail\/u\/\d+\/#inbox/i, { timeout: 30000 }).catch(() => {}),
       page.waitForFunction(
         () => document.title && document.title.toLowerCase().includes('gmail'),
         null,
