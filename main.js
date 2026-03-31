@@ -1,5 +1,7 @@
 const { chromium, devices } = require('playwright');
 const fs = require('fs');
+const Imap = require('imap');
+const { simpleParser } = require('mailparser');
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -49,113 +51,158 @@ function getGmailCreds() {
   return { user, pass };
 }
 
-/**
- * Legge la OTP da Gmail in modo robusto:
- * - gestisce possibili schermate intermedie
- * - aspetta più a lungo l’arrivo dell’email
- * - non va in errore duro se non trova tr.zA
- */
-async function readOtpFromGmail(browser) {
+function extractOtp(text) {
+  if (!text) return null;
+
+  const patterns = [
+    /\b(\d{6})\b/,
+    /codice[^0-9]{0,20}(\d{6})/i,
+    /otp[^0-9]{0,20}(\d{6})/i,
+    /verification code[^0-9]{0,20}(\d{6})/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+
+  return null;
+}
+
+async function readLatestOtpFromGmailIMAP(expectedEmail) {
   const { user, pass } = getGmailCreds();
+
   if (!user || !pass) {
-    console.log('[Gmail] Credenziali non presenti, salto lettura OTP.');
+    console.log('[IMAP] Credenziali Gmail non presenti.');
     return null;
   }
 
-  const ctx = await browser.newContext({
-    ...devices['Desktop Chrome'],
-    viewport: { width: 1440, height: 900 },
-    locale: 'it-IT',
-    timezoneId: 'Europe/Rome'
-  });
-  const page = await ctx.newPage();
-
-  try {
-    await page.goto('https://mail.google.com/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 120000
+  return new Promise((resolve) => {
+    const imap = new Imap({
+      user,
+      password: pass,
+      host: 'imap.gmail.com',
+      port: 993,
+      tls: true,
+      connTimeout: 30000,
+      authTimeout: 30000,
+      tlsOptions: { rejectUnauthorized: false }
     });
-    await wait(5000);
-    await saveDebug(page, 'debug-gmail-01-landing');
 
-    // Campo email
-    const emailInput = page.locator('input[type="email"]');
-    await emailInput.waitFor({ state: 'visible', timeout: 30000 });
-    await emailInput.fill(user);
-    console.log('[Gmail] Email inserita, avanzamento...');
-    await page.locator('#identifierNext button').click();
-    await wait(4000);
-    await saveDebug(page, 'debug-gmail-02-after-email');
+    let resolved = false;
 
-    // Campo password (App Password)
-    const passwordInput = page.locator('input[type="password"]');
-    await passwordInput.waitFor({ state: 'visible', timeout: 60000 });
-    await passwordInput.fill(pass);
-    console.log('[Gmail] App password inserita, accesso in corso...');
-    await page.locator('#passwordNext button').click();
-
-    await wait(8000);
-    await saveDebug(page, 'debug-gmail-03-after-password');
-
-    // Prova a chiudere eventuali popup o tour
-    await jsClick(page, 'button[aria-label="Chiudi"], button[aria-label="Close"]')
-      .catch(() => {});
-    await wait(3000);
-
-    // Aspetta che l’URL contenga "inbox" o che il titolo indichi Gmail
-    await Promise.race([
-      page.waitForURL(/mail\.google\.com\/mail\/u\/\d+\/#inbox/i, { timeout: 30000 }).catch(() => {}),
-      page.waitForFunction(
-        () => document.title && document.title.toLowerCase().includes('gmail'),
-        null,
-        { timeout: 30000 }
-      ).catch(() => {})
-    ]);
-
-    await saveDebug(page, 'debug-gmail-04-inbox');
-
-    // Aspetta fino a 90s che arrivi almeno una riga email
-    const rowLocator = page.locator('tr.zA');
-    const maxAttempts = 9;
-    let found = false;
-
-    for (let i = 0; i < maxAttempts; i++) {
-      const count = await rowLocator.count();
-      if (count > 0) {
-        try {
-          await rowLocator.first().waitFor({ state: 'visible', timeout: 10000 });
-          found = true;
-          break;
-        } catch (_) {
-          // retry
-        }
+    const done = (value) => {
+      if (!resolved) {
+        resolved = true;
+        try { imap.end(); } catch (_) {}
+        resolve(value);
       }
-      console.log(`[Gmail] Nessuna riga inbox visibile, retry ${i + 1}/${maxAttempts}...`);
-      await wait(10000);
-    }
+    };
 
-    if (!found) {
-      console.log('[Gmail] Nessuna email visibile in inbox dopo 90s, salto lettura OTP.');
-      await saveDebug(page, 'debug-gmail-05-no-rows');
-      return null;
-    }
+    imap.once('ready', () => {
+      imap.openBox('INBOX', true, (err) => {
+        if (err) {
+          console.error('[IMAP] Errore openBox:', err);
+          return done(null);
+        }
 
-    // Clicca la prima email (più recente)
-    await rowLocator.first().click();
-    await wait(5000);
-    await saveDebug(page, 'debug-gmail-06-open-mail');
+        imap.search(['ALL'], (err, results) => {
+          if (err) {
+            console.error('[IMAP] Errore search:', err);
+            return done(null);
+          }
 
-    // Qui dovresti estrarre il codice OTP dal contenuto
-    // (placeholder: ritorna null per ora, così non rompe il flusso)
-    console.log('[Gmail] Email aperta, estrazione OTP da implementare.');
-    return null;
-  } catch (err) {
-    console.error('[Gmail] Errore durante la lettura OTP:', err);
-    await saveDebug(page, 'debug-gmail-error');
-    return null;
-  } finally {
-    await ctx.close();
+          if (!results || !results.length) {
+            console.log('[IMAP] Nessuna email trovata.');
+            return done(null);
+          }
+
+          const latestIds = results.slice(-10);
+          const fetch = imap.fetch(latestIds, { bodies: '' });
+          const emails = [];
+
+          fetch.on('message', (msg, seqno) => {
+            let rawBuffer = '';
+
+            msg.on('body', (stream) => {
+              stream.on('data', (chunk) => {
+                rawBuffer += chunk.toString('utf8');
+              });
+            });
+
+            msg.once('attributes', (attrs) => {
+              emails.push({
+                seqno,
+                raw: () => rawBuffer,
+                date: attrs.date || new Date(0)
+              });
+            });
+          });
+
+          fetch.once('error', (err) => {
+            console.error('[IMAP] Errore fetch:', err);
+            done(null);
+          });
+
+          fetch.once('end', async () => {
+            try {
+              emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+              for (const item of emails) {
+                const mail = await simpleParser(item.raw());
+                const subject = mail.subject || '';
+                const text = mail.text || '';
+                const html = typeof mail.html === 'string' ? mail.html : '';
+                const combined = `${subject}\n${text}\n${html}`;
+
+                const isRelevant =
+                  combined.toLowerCase().includes('we-wealth') ||
+                  combined.toLowerCase().includes('wewealth') ||
+                  combined.toLowerCase().includes('otp') ||
+                  combined.toLowerCase().includes('codice') ||
+                  combined.toLowerCase().includes(expectedEmail.toLowerCase());
+
+                if (!isRelevant) continue;
+
+                const otp = extractOtp(combined);
+                if (otp) {
+                  console.log(`[IMAP] OTP trovata: ${otp}`);
+                  return done(otp);
+                }
+              }
+
+              console.log('[IMAP] Nessuna OTP trovata nelle ultime email.');
+              done(null);
+            } catch (e) {
+              console.error('[IMAP] Errore parsing email:', e);
+              done(null);
+            }
+          });
+        });
+      });
+    });
+
+    imap.once('error', (err) => {
+      console.error('[IMAP] Errore connessione IMAP:', err);
+      done(null);
+    });
+
+    imap.once('end', () => {
+      if (!resolved) done(null);
+    });
+
+    imap.connect();
+  });
+}
+
+async function pollOtpFromGmail(expectedEmail, attempts = 12, delayMs = 10000) {
+  for (let i = 0; i < attempts; i++) {
+    console.log(`[IMAP] Tentativo lettura OTP ${i + 1}/${attempts}...`);
+    const otp = await readLatestOtpFromGmailIMAP(expectedEmail);
+    if (otp) return otp;
+    await wait(delayMs);
   }
+  return null;
 }
 
 async function main() {
@@ -172,7 +219,6 @@ async function main() {
   const page = await context.newPage();
 
   try {
-    // STEP 1: We‑Wealth
     await page.goto('https://www.we-wealth.com', {
       waitUntil: 'domcontentloaded',
       timeout: 120000
@@ -229,16 +275,28 @@ async function main() {
     await saveDebug(page, 'debug-ww-05-after-send-otp');
     console.log('Step 1 completato — email OTP inviata.');
 
-    // STEP 2: Gmail
-    console.log('Attendo 10 secondi prima di leggere la casella email...');
-    await wait(10000);
+    console.log('Attendo OTP via IMAP...');
+    const otp = await pollOtpFromGmail(email, 12, 10000);
 
-    const otp = await readOtpFromGmail(browser);
     if (!otp) {
-      console.log('OTP non letta (o lettura non ancora implementata), script terminato senza errore.');
+      console.log('OTP non letta via IMAP.');
     } else {
-      console.log(`OTP letta da Gmail: ${otp}`);
-      // qui potresti tornare su We‑Wealth e inserirla se ti serve
+      console.log(`OTP letta da Gmail via IMAP: ${otp}`);
+
+      await page.bringToFront();
+
+      const otpInput = page.locator('#otp-code, input[name="otp"], input[type="tel"]').first();
+      await otpInput.waitFor({ state: 'visible', timeout: 20000 });
+      await otpInput.fill(otp);
+      console.log('OTP inserita nel campo.');
+
+      const confermaBtn = page.locator('#otp-verify, button[type="submit"]').first();
+      await confermaBtn.waitFor({ state: 'visible', timeout: 20000 });
+      await confermaBtn.click();
+      console.log('Conferma OTP cliccata.');
+
+      await wait(5000);
+      await saveDebug(page, 'debug-ww-06-after-otp');
     }
 
     console.log('Script completato con successo.');
