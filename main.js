@@ -39,7 +39,7 @@ async function saveDebug(page, name) {
 }
 
 async function jsClick(page, selector) {
-  const clicked = await page.evaluate((sel) => {
+  return page.evaluate((sel) => {
     const el = document.querySelector(sel);
     if (el) {
       el.click();
@@ -47,7 +47,29 @@ async function jsClick(page, selector) {
     }
     return false;
   }, selector);
-  return clicked;
+}
+
+async function closePossibleOverlays(page) {
+  const selectors = [
+    'button[aria-label="Close"]',
+    'button[aria-label="Chiudi"]',
+    '.iubenda-cs-close-btn',
+    '.iubenda-cs-accept-btn',
+    '#iubenda-cs-accept-btn',
+    '.cc-btn',
+    '.cookie-accept',
+    '.cookie-banner-accept'
+  ];
+
+  for (const sel of selectors) {
+    try {
+      const loc = page.locator(sel).first();
+      if (await loc.isVisible().catch(() => false)) {
+        await loc.click({ force: true }).catch(() => {});
+        await wait(500);
+      }
+    } catch (_) {}
+  }
 }
 
 function getGmailCreds() {
@@ -249,11 +271,9 @@ async function sendSuccessEmail(screenshotPath) {
 
 async function waitForEitherRegistrationOrSuccess(page) {
   for (let i = 0; i < 20; i++) {
-    const registrationVisible = await page
-      .locator('text=Create an account, text=Crea un account')
-      .first()
-      .isVisible()
-      .catch(() => false);
+    const registrationVisible =
+      await page.locator('text=Create an account').first().isVisible().catch(() => false) ||
+      await page.locator('text=Crea un account').first().isVisible().catch(() => false);
 
     if (registrationVisible) return 'registration';
 
@@ -271,41 +291,72 @@ async function waitForEitherRegistrationOrSuccess(page) {
   return 'unknown';
 }
 
-async function fillRegistrationForm(page) {
-  console.log('[FORM] Attendo form di registrazione...');
+async function fillVisibleTextInputs(page, firstName, lastName) {
+  const inputs = page.locator('input:visible');
+  const count = await inputs.count();
 
-  await page.locator('text=Create an account, text=Crea un account').first()
-    .waitFor({ state: 'visible', timeout: 30000 });
-
-  await saveDebug(page, 'debug-ww-07-registration-form');
-
-  const firstName = randomFirstName();
-  const lastName = randomLastName();
-
-  const textInputs = page.locator('input[type="text"]:visible, input:not([type]):visible');
-  const inputCount = await textInputs.count();
-
-  if (inputCount >= 1) {
-    await textInputs.nth(0).fill(firstName).catch(() => {});
-  }
-  if (inputCount >= 2) {
-    await textInputs.nth(1).fill(lastName).catch(() => {});
+  const textLike = [];
+  for (let i = 0; i < count; i++) {
+    const input = inputs.nth(i);
+    const type = (await input.getAttribute('type').catch(() => 'text')) || 'text';
+    if (['text', 'search', ''].includes(type)) {
+      textLike.push(input);
+    }
   }
 
-  console.log(`[FORM] Nome compilato: ${firstName} ${lastName}`);
-
-  const privateBtn = page.getByRole('button', { name: /i am a private|privato/i }).first();
-  if (await privateBtn.count()) {
-    await privateBtn.click().catch(() => {});
-    console.log('[FORM] Selezionato profilo private.');
+  if (textLike[0]) {
+    await textLike[0].click().catch(() => {});
+    await textLike[0].fill(firstName).catch(async () => {
+      await textLike[0].type(firstName, { delay: 80 }).catch(() => {});
+    });
   }
 
-  const dailyBtn = page.getByRole('button', { name: /daily|giornaliera/i }).first();
-  if (await dailyBtn.count()) {
-    await dailyBtn.click().catch(() => {});
-    console.log('[FORM] Newsletter selezionata.');
+  if (textLike[1]) {
+    await textLike[1].click().catch(() => {});
+    await textLike[1].fill(lastName).catch(async () => {
+      await textLike[1].type(lastName, { delay: 80 }).catch(() => {});
+    });
+  }
+}
+
+async function selectJobPosition(page) {
+  const dropdownCandidates = [
+    'select:visible',
+    '[role="combobox"]:visible',
+    '.select-selected:visible',
+    '.nice-select:visible',
+    '.dropdown:visible',
+    '.dropdown-toggle:visible'
+  ];
+
+  for (const sel of dropdownCandidates) {
+    const dropdown = page.locator(sel).first();
+    if (await dropdown.isVisible().catch(() => false)) {
+      await dropdown.click({ force: true }).catch(() => {});
+      await wait(1000);
+
+      const optionCandidates = page.locator(
+        'option, [role="option"]:visible, .select-items div:visible, .dropdown-menu *:visible, li:visible'
+      );
+
+      const optionCount = await optionCandidates.count().catch(() => 0);
+      for (let i = 0; i < optionCount; i++) {
+        const opt = optionCandidates.nth(i);
+        const text = ((await opt.innerText().catch(() => '')) || '').trim();
+        if (text && !/job position|seleziona|select/i.test(text)) {
+          await opt.click({ force: true }).catch(() => {});
+          console.log(`[FORM] Job position selezionata: ${text}`);
+          return true;
+        }
+      }
+    }
   }
 
+  console.log('[FORM] Job position non selezionata.');
+  return false;
+}
+
+async function checkAllVisibleCheckboxes(page) {
   const checkboxes = page.locator('input[type="checkbox"]');
   const cbCount = await checkboxes.count();
 
@@ -320,28 +371,85 @@ async function fillRegistrationForm(page) {
   }
 
   console.log(`[FORM] Checkbox gestite: ${cbCount}`);
+}
+
+async function fillRegistrationForm(page) {
+  console.log('[FORM] Attendo form di registrazione...');
+
+  await page.locator('text=Create an account, text=Crea un account').first()
+    .waitFor({ state: 'visible', timeout: 30000 });
+
+  await closePossibleOverlays(page);
+  await wait(1000);
+  await saveDebug(page, 'debug-ww-07-registration-form');
+
+  const firstName = randomFirstName();
+  const lastName = randomLastName();
+
+  await fillVisibleTextInputs(page, firstName, lastName);
+  console.log(`[FORM] Nome compilato: ${firstName} ${lastName}`);
+
+  const privateBtn = page.getByRole('button', { name: /i am a private|sono un privato|privato/i }).first();
+  if (await privateBtn.isVisible().catch(() => false)) {
+    await privateBtn.click({ force: true }).catch(() => {});
+    console.log('[FORM] Selezionato profilo private.');
+  }
+
+  const dailyBtn = page.getByRole('button', { name: /daily|giornaliera/i }).first();
+  if (await dailyBtn.isVisible().catch(() => false)) {
+    await dailyBtn.click({ force: true }).catch(() => {});
+    console.log('[FORM] Newsletter selezionata.');
+  }
+
+  await selectJobPosition(page);
+  await wait(1000);
+
+  await checkAllVisibleCheckboxes(page);
+  await wait(1000);
+
+  await closePossibleOverlays(page);
 
   const signUpBtn = page.getByRole('button', { name: /sign up|registrati/i }).first();
   await signUpBtn.waitFor({ state: 'visible', timeout: 20000 });
-  await signUpBtn.click();
+  await signUpBtn.click({ force: true });
   console.log('[FORM] Bottone finale SIGN UP / REGISTRATI cliccato.');
+
+  await wait(3000);
+  await saveDebug(page, 'debug-ww-07b-after-signup-click');
 }
 
-async function captureSuccessAndEmail(page) {
-  console.log('[SUCCESS] Attendo schermata finale di conferma...');
-
-  for (let i = 0; i < 20; i++) {
-    const ok =
+async function waitForSuccessModal(page) {
+  for (let i = 0; i < 25; i++) {
+    const successVisible =
       await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
       await page.locator('text=For registering').first().isVisible().catch(() => false) ||
       await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
       await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
 
-    if (ok) break;
+    const formStillVisible =
+      await page.locator('text=Create an account').first().isVisible().catch(() => false) ||
+      await page.locator('text=Crea un account').first().isVisible().catch(() => false);
+
+    if (successVisible) return true;
+    if (formStillVisible) {
+      console.log('[SUCCESS] Il form è ancora visibile, attendo ancora...');
+    }
+
     await wait(1500);
   }
 
-  await wait(3000);
+  return false;
+}
+
+async function captureSuccessAndEmail(page) {
+  console.log('[SUCCESS] Attendo schermata finale di conferma...');
+
+  const success = await waitForSuccessModal(page);
+  if (!success) {
+    throw new Error('La schermata finale con check di conferma non è comparsa.');
+  }
+
+  await wait(2000);
 
   const finalShot = 'registrazione-confermata.png';
   await page.screenshot({ path: finalShot, fullPage: true });
@@ -373,6 +481,8 @@ async function main() {
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     await wait(8000);
     await saveDebug(page, 'debug-ww-01-home');
+
+    await closePossibleOverlays(page);
 
     const cookieClicked = await jsClick(page, 'a.ww-cookiebanner__brand');
     console.log(cookieClicked ? 'Cookie banner chiuso via JS.' : 'Cookie banner non trovato.');
@@ -451,7 +561,6 @@ async function main() {
 
       if (nextStep === 'registration') {
         await fillRegistrationForm(page);
-        await wait(3000);
       }
 
       await captureSuccessAndEmail(page);
