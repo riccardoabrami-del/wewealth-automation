@@ -290,10 +290,30 @@ async function main() {
       await otpInput.fill(otp);
       console.log('OTP inserita nel campo.');
 
-      const confermaBtn = page.locator('#otp-verify, button[type="submit"]').first();
-      await confermaBtn.waitFor({ state: 'visible', timeout: 20000 });
-      await confermaBtn.click();
-      console.log('Conferma OTP cliccata.');
+      // Prima prova con Enter
+      await otpInput.press('Enter').catch(() => {});
+      await wait(3000);
+
+      // Poi cerca un bottone davvero visibile e con testo coerente
+      const buttonCandidates = page.locator('button:visible, input[type="submit"]:visible, a[role="button"]:visible');
+      const count = await buttonCandidates.count();
+      let clicked = false;
+
+      for (let i = 0; i < count; i++) {
+        const btn = buttonCandidates.nth(i);
+        const text = ((await btn.innerText().catch(() => '')) || '').trim();
+
+        if (/conferma|verifica|accedi|continua|invia/i.test(text)) {
+          await btn.click().catch(() => {});
+          console.log(`Conferma OTP cliccata su bottone: "${text}"`);
+          clicked = true;
+          break;
+        }
+      }
+
+      if (!clicked) {
+        console.log('Nessun bottone conferma OTP visibile trovato, proseguo dopo Enter.');
+      }
 
       await wait(5000);
       await saveDebug(page, 'debug-ww-06-after-otp');
