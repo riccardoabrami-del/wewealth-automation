@@ -277,7 +277,14 @@ async function waitForEitherRegistrationOrSuccess(page) {
 
     if (fnameVisible || lnameVisible || signupVisible) return 'registration';
 
+    const greenCheckVisible = await page
+      .locator('img[src*="green-check.png"]')
+      .first()
+      .isVisible()
+      .catch(() => false);
+
     const successVisible =
+      greenCheckVisible ||
       await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
       await page.locator('text=For registering').first().isVisible().catch(() => false) ||
       await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
@@ -362,7 +369,14 @@ async function fillRegistrationForm(page) {
 
 async function waitForSuccessModal(page) {
   for (let i = 0; i < 25; i++) {
+    const greenCheckVisible = await page
+      .locator('img[src*="green-check.png"]')
+      .first()
+      .isVisible()
+      .catch(() => false);
+
     const successVisible =
+      greenCheckVisible ||
       await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
       await page.locator('text=For registering').first().isVisible().catch(() => false) ||
       await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
@@ -374,6 +388,7 @@ async function waitForSuccessModal(page) {
       await page.locator('#otp-register-start').isVisible().catch(() => false);
 
     if (successVisible) return true;
+
     if (formStillVisible) {
       console.log('[SUCCESS] Il form è ancora visibile, attendo ancora...');
     }
