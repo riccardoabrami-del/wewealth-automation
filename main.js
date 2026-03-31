@@ -271,11 +271,11 @@ async function sendSuccessEmail(screenshotPath) {
 
 async function waitForEitherRegistrationOrSuccess(page) {
   for (let i = 0; i < 20; i++) {
-    const registrationVisible =
-      await page.locator('text=Create an account').first().isVisible().catch(() => false) ||
-      await page.locator('text=Crea un account').first().isVisible().catch(() => false);
+    const fnameVisible = await page.locator('#fname').isVisible().catch(() => false);
+    const lnameVisible = await page.locator('#lname').isVisible().catch(() => false);
+    const signupVisible = await page.locator('#otp-register-start').isVisible().catch(() => false);
 
-    if (registrationVisible) return 'registration';
+    if (fnameVisible || lnameVisible || signupVisible) return 'registration';
 
     const successVisible =
       await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
@@ -291,93 +291,12 @@ async function waitForEitherRegistrationOrSuccess(page) {
   return 'unknown';
 }
 
-async function fillVisibleTextInputs(page, firstName, lastName) {
-  const inputs = page.locator('input:visible');
-  const count = await inputs.count();
-
-  const textLike = [];
-  for (let i = 0; i < count; i++) {
-    const input = inputs.nth(i);
-    const type = (await input.getAttribute('type').catch(() => 'text')) || 'text';
-    if (['text', 'search', ''].includes(type)) {
-      textLike.push(input);
-    }
-  }
-
-  if (textLike[0]) {
-    await textLike[0].click().catch(() => {});
-    await textLike[0].fill(firstName).catch(async () => {
-      await textLike[0].type(firstName, { delay: 80 }).catch(() => {});
-    });
-  }
-
-  if (textLike[1]) {
-    await textLike[1].click().catch(() => {});
-    await textLike[1].fill(lastName).catch(async () => {
-      await textLike[1].type(lastName, { delay: 80 }).catch(() => {});
-    });
-  }
-}
-
-async function selectJobPosition(page) {
-  const dropdownCandidates = [
-    'select:visible',
-    '[role="combobox"]:visible',
-    '.select-selected:visible',
-    '.nice-select:visible',
-    '.dropdown:visible',
-    '.dropdown-toggle:visible'
-  ];
-
-  for (const sel of dropdownCandidates) {
-    const dropdown = page.locator(sel).first();
-    if (await dropdown.isVisible().catch(() => false)) {
-      await dropdown.click({ force: true }).catch(() => {});
-      await wait(1000);
-
-      const optionCandidates = page.locator(
-        'option, [role="option"]:visible, .select-items div:visible, .dropdown-menu *:visible, li:visible'
-      );
-
-      const optionCount = await optionCandidates.count().catch(() => 0);
-      for (let i = 0; i < optionCount; i++) {
-        const opt = optionCandidates.nth(i);
-        const text = ((await opt.innerText().catch(() => '')) || '').trim();
-        if (text && !/job position|seleziona|select/i.test(text)) {
-          await opt.click({ force: true }).catch(() => {});
-          console.log(`[FORM] Job position selezionata: ${text}`);
-          return true;
-        }
-      }
-    }
-  }
-
-  console.log('[FORM] Job position non selezionata.');
-  return false;
-}
-
-async function checkAllVisibleCheckboxes(page) {
-  const checkboxes = page.locator('input[type="checkbox"]');
-  const cbCount = await checkboxes.count();
-
-  for (let i = 0; i < cbCount; i++) {
-    const cb = checkboxes.nth(i);
-    const checked = await cb.isChecked().catch(() => false);
-    if (!checked) {
-      await cb.check().catch(async () => {
-        await cb.click({ force: true }).catch(() => {});
-      });
-    }
-  }
-
-  console.log(`[FORM] Checkbox gestite: ${cbCount}`);
-}
-
 async function fillRegistrationForm(page) {
-  console.log('[FORM] Attendo form di registrazione...');
-
-  await page.locator('text=Create an account, text=Crea un account').first()
-    .waitFor({ state: 'visible', timeout: 30000 });
+  console.log('[FORM] Attendo i campi reali del form...');
+  await page.locator('#fname').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('#lname').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('#user_professione').waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('#otp-register-start').waitFor({ state: 'visible', timeout: 30000 });
 
   await closePossibleOverlays(page);
   await wait(1000);
@@ -386,7 +305,8 @@ async function fillRegistrationForm(page) {
   const firstName = randomFirstName();
   const lastName = randomLastName();
 
-  await fillVisibleTextInputs(page, firstName, lastName);
+  await page.locator('#fname').fill(firstName);
+  await page.locator('#lname').fill(lastName);
   console.log(`[FORM] Nome compilato: ${firstName} ${lastName}`);
 
   const privateBtn = page.getByRole('button', { name: /i am a private|sono un privato|privato/i }).first();
@@ -401,18 +321,39 @@ async function fillRegistrationForm(page) {
     console.log('[FORM] Newsletter selezionata.');
   }
 
-  await selectJobPosition(page);
-  await wait(1000);
+  await page.locator('#user_professione').selectOption({ label: 'Employee' }).catch(async () => {
+    await page.locator('#user_professione').selectOption({ value: 'Employee' }).catch(async () => {
+      await page.locator('#user_professione').selectOption({ index: 2 });
+    });
+  });
+  console.log('[FORM] Job position selezionata.');
 
-  await checkAllVisibleCheckboxes(page);
-  await wait(1000);
+  await page.locator('#terms').check().catch(async () => {
+    await page.locator('#terms').setChecked(true);
+  });
+
+  const terms2 = page.locator('#terms-2');
+  if (await terms2.count()) {
+    await terms2.check().catch(async () => {
+      await terms2.setChecked(true).catch(() => {});
+    });
+  }
+
+  const terms3 = page.locator('#terms-3');
+  if (await terms3.count()) {
+    await terms3.check().catch(async () => {
+      await terms3.setChecked(true).catch(() => {});
+    });
+  }
+
+  console.log('[FORM] Checkbox compilate.');
 
   await closePossibleOverlays(page);
+  await wait(1000);
 
-  const signUpBtn = page.getByRole('button', { name: /sign up|registrati/i }).first();
-  await signUpBtn.waitFor({ state: 'visible', timeout: 20000 });
+  const signUpBtn = page.locator('#otp-register-start');
   await signUpBtn.click({ force: true });
-  console.log('[FORM] Bottone finale SIGN UP / REGISTRATI cliccato.');
+  console.log('[FORM] Bottone conferma registrazione cliccato.');
 
   await wait(3000);
   await saveDebug(page, 'debug-ww-07b-after-signup-click');
@@ -427,8 +368,9 @@ async function waitForSuccessModal(page) {
       await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
 
     const formStillVisible =
-      await page.locator('text=Create an account').first().isVisible().catch(() => false) ||
-      await page.locator('text=Crea un account').first().isVisible().catch(() => false);
+      await page.locator('#fname').isVisible().catch(() => false) ||
+      await page.locator('#lname').isVisible().catch(() => false) ||
+      await page.locator('#otp-register-start').isVisible().catch(() => false);
 
     if (successVisible) return true;
     if (formStillVisible) {
