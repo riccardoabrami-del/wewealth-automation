@@ -9,7 +9,7 @@ on:
         default: true
         type: boolean
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "0 5 * * *"  # Ogni giorno alle 07:00 ora italiana (CEST = UTC+2)
 
 jobs:
   run-automation:
@@ -29,7 +29,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 20
 
       - name: Install dependencies
         run: npm install
@@ -37,15 +37,15 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run automation (Step 1 + Step 2 OTP)
-        run: npm start
+      - name: Run WeWealth automation
+        run: node main.js
 
       - name: Upload debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-artifacts
+          name: debug-screenshots
           path: |
             *.png
             *.html
-          if-no-files-found: ignore
+          retention-days: 7
