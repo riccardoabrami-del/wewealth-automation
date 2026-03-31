@@ -291,6 +291,25 @@ async function waitForEitherRegistrationOrSuccess(page) {
   return 'unknown';
 }
 
+async function setCheckboxesViaJs(page) {
+  await page.evaluate(() => {
+    ['terms', 'terms-2', 'terms-3'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.checked = true;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+  });
+
+  const termsChecked = await page.locator('#terms').isChecked().catch(() => false);
+  const terms2Checked = await page.locator('#terms-2').isChecked().catch(() => false);
+  const terms3Checked = await page.locator('#terms-3').isChecked().catch(() => false);
+
+  console.log(`[FORM] Checkbox compilate. terms=${termsChecked} terms2=${terms2Checked} terms3=${terms3Checked}`);
+}
+
 async function fillRegistrationForm(page) {
   console.log('[FORM] Attendo i campi reali del form...');
   await page.locator('#fname').waitFor({ state: 'visible', timeout: 30000 });
@@ -328,25 +347,7 @@ async function fillRegistrationForm(page) {
   });
   console.log('[FORM] Job position selezionata.');
 
-  await page.locator('#terms').check().catch(async () => {
-    await page.locator('#terms').setChecked(true);
-  });
-
-  const terms2 = page.locator('#terms-2');
-  if (await terms2.count()) {
-    await terms2.check().catch(async () => {
-      await terms2.setChecked(true).catch(() => {});
-    });
-  }
-
-  const terms3 = page.locator('#terms-3');
-  if (await terms3.count()) {
-    await terms3.check().catch(async () => {
-      await terms3.setChecked(true).catch(() => {});
-    });
-  }
-
-  console.log('[FORM] Checkbox compilate.');
+  await setCheckboxesViaJs(page);
 
   await closePossibleOverlays(page);
   await wait(1000);
