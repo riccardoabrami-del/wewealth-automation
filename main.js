@@ -2,6 +2,7 @@ const { chromium, devices } = require('playwright');
 const fs = require('fs');
 const Imap = require('imap');
 const { simpleParser } = require('mailparser');
+const nodemailer = require('nodemailer');
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -12,6 +13,18 @@ function generaEmailWeWealth() {
   const n2 = Math.floor(Math.random() * 10);
   const n3 = Math.floor(Math.random() * 10);
   return `riccardo.abrami+${n1}${n2}${n3}@we-wealth.com`;
+}
+
+function randomChoice(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomFirstName() {
+  return randomChoice(['Luca', 'Marco', 'Andrea', 'Paolo', 'Davide', 'Matteo']);
+}
+
+function randomLastName() {
+  return randomChoice(['Rossi', 'Bianchi', 'Romano', 'Esposito', 'Ricci', 'Conti']);
 }
 
 async function saveDebug(page, name) {
@@ -205,6 +218,124 @@ async function pollOtpFromGmail(expectedEmail, attempts = 12, delayMs = 10000) {
   return null;
 }
 
+async function sendSuccessEmail(screenshotPath) {
+  const { user, pass } = getGmailCreds();
+
+  if (!user || !pass) {
+    console.log('[MAIL] Credenziali Gmail non presenti, salto invio email.');
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass }
+  });
+
+  await transporter.sendMail({
+    from: user,
+    to: 'milanotoonight@gmail.com',
+    subject: 'Registrazione confermata',
+    text: 'Registrazione confermata',
+    attachments: [
+      {
+        filename: 'registrazione-confermata.png',
+        path: screenshotPath
+      }
+    ]
+  });
+
+  console.log('[MAIL] Email inviata con screenshot allegato.');
+}
+
+async function fillRegistrationForm(page) {
+  console.log('[FORM] Attendo form di registrazione...');
+
+  await page.locator('text=Create an account, text=Crea un account').first()
+    .waitFor({ state: 'visible', timeout: 30000 });
+
+  await saveDebug(page, 'debug-ww-07-registration-form');
+
+  const firstName = randomFirstName();
+  const lastName = randomLastName();
+
+  const textInputs = page.locator('input[type="text"]:visible, input:not([type]):visible');
+  const inputCount = await textInputs.count();
+
+  if (inputCount >= 1) {
+    await textInputs.nth(0).fill(firstName).catch(() => {});
+  }
+  if (inputCount >= 2) {
+    await textInputs.nth(1).fill(lastName).catch(() => {});
+  }
+
+  console.log(`[FORM] Nome compilato: ${firstName} ${lastName}`);
+
+  // Selezione tipo utente
+  const privateBtn = page.getByRole('button', { name: /i am a private|privato/i }).first();
+  if (await privateBtn.count()) {
+    await privateBtn.click().catch(() => {});
+    console.log('[FORM] Selezionato profilo private.');
+  }
+
+  // Job position: tenta apertura select e sceglie prima opzione disponibile
+  const jobDropdown = page.locator('select:visible, [role="combobox"]:visible, .select-selected:visible').first();
+  if (await jobDropdown.count()) {
+    await jobDropdown.click().catch(() => {});
+    await wait(1000);
+
+    const firstOption = page.locator('option, [role="option"], .select-items div').nth(1);
+    if (await firstOption.count()) {
+      await firstOption.click().catch(() => {});
+      console.log('[FORM] Job position selezionata.');
+    }
+  }
+
+  // Newsletter daily
+  const dailyBtn = page.getByRole('button', { name: /daily/i }).first();
+  if (await dailyBtn.count()) {
+    await dailyBtn.click().catch(() => {});
+    console.log('[FORM] Newsletter daily selezionata.');
+  }
+
+  // Checkbox
+  const checkboxes = page.locator('input[type="checkbox"]');
+  const cbCount = await checkboxes.count();
+  for (let i = 0; i < cbCount; i++) {
+    const cb = checkboxes.nth(i);
+    const checked = await cb.isChecked().catch(() => false);
+    if (!checked) {
+      await cb.check().catch(() => {});
+    }
+  }
+  console.log(`[FORM] Checkbox gestite: ${cbCount}`);
+
+  // Bottone finale
+  const signUpBtn = page.getByRole('button', { name: /sign up|registrati/i }).first();
+  await signUpBtn.waitFor({ state: 'visible', timeout: 20000 });
+  await signUpBtn.click();
+  console.log('[FORM] Bottone finale SIGN UP cliccato.');
+}
+
+async function captureSuccessAndEmail(page) {
+  console.log('[SUCCESS] Attendo schermata finale di conferma...');
+
+  await page.locator('text=Thank you, text=For registering, text=Registrazione confermata').first()
+    .waitFor({ state: 'visible', timeout: 30000 })
+    .catch(async () => {
+      await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first()
+        .waitFor({ state: 'visible', timeout: 30000 });
+    });
+
+  await wait(3000);
+
+  const finalShot = 'registrazione-confermata.png';
+  await page.screenshot({ path: finalShot, fullPage: true });
+  console.log(`[SCREENSHOT] Screenshot finale salvato: ${finalShot}`);
+
+  await saveDebug(page, 'debug-ww-08-registration-success');
+  await sendSuccessEmail(finalShot);
+}
+
 async function main() {
   const desktop = devices['Desktop Chrome'];
   const browser = await chromium.launch({ headless: true });
@@ -297,8 +428,13 @@ async function main() {
       await confermaBtn.click();
       console.log('Conferma OTP cliccata.');
 
-      await wait(5000);
+      await wait(2000);
       await saveDebug(page, 'debug-ww-06-after-otp');
+
+      await fillRegistrationForm(page);
+      await wait(3000);
+
+      await captureSuccessAndEmail(page);
     }
 
     console.log('Script completato con successo.');
