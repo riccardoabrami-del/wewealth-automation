@@ -50,10 +50,10 @@ function getGmailCreds() {
 }
 
 /**
- * Legge la OTP da Gmail in modo robusto:
- * - gestisce possibili schermate intermedie
- * - aspetta più a lungo l’arrivo dell’email
- * - non va in errore duro se non trova tr.zA
+ * Legge la OTP da Gmail:
+ * - fa login
+ * - apre l’ultima mail
+ * - cerca un codice di 6 cifre nel testo
  */
 async function readOtpFromGmail(browser) {
   const { user, pass } = getGmailCreds();
@@ -78,7 +78,7 @@ async function readOtpFromGmail(browser) {
     await wait(5000);
     await saveDebug(page, 'debug-gmail-01-landing');
 
-    // Campo email
+    // Email
     const emailInput = page.locator('input[type="email"]');
     await emailInput.waitFor({ state: 'visible', timeout: 30000 });
     await emailInput.fill(user);
@@ -87,7 +87,7 @@ async function readOtpFromGmail(browser) {
     await wait(4000);
     await saveDebug(page, 'debug-gmail-02-after-email');
 
-    // Campo password (App Password)
+    // Password (app password)
     const passwordInput = page.locator('input[type="password"]');
     await passwordInput.waitFor({ state: 'visible', timeout: 60000 });
     await passwordInput.fill(pass);
@@ -97,12 +97,11 @@ async function readOtpFromGmail(browser) {
     await wait(8000);
     await saveDebug(page, 'debug-gmail-03-after-password');
 
-    // Prova a chiudere eventuali popup o tour
-    await jsClick(page, 'button[aria-label="Chiudi"], button[aria-label="Close"]')
-      .catch(() => {});
+    // Chiudi eventuali popup
+    await jsClick(page, 'button[aria-label="Chiudi"], button[aria-label="Close"]').catch(() => {});
     await wait(3000);
 
-    // Aspetta che l’URL contenga "inbox" o che il titolo indichi Gmail
+    // Attendi inbox
     await Promise.race([
       page.waitForURL(/mail\.google\.com\/mail\/u\/\d+\/#inbox/i, { timeout: 30000 }).catch(() => {}),
       page.waitForFunction(
@@ -126,9 +125,7 @@ async function readOtpFromGmail(browser) {
           await rowLocator.first().waitFor({ state: 'visible', timeout: 10000 });
           found = true;
           break;
-        } catch (_) {
-          // retry
-        }
+        } catch (_) {}
       }
       console.log(`[Gmail] Nessuna riga inbox visibile, retry ${i + 1}/${maxAttempts}...`);
       await wait(10000);
@@ -145,10 +142,26 @@ async function readOtpFromGmail(browser) {
     await wait(5000);
     await saveDebug(page, 'debug-gmail-06-open-mail');
 
-    // Qui dovresti estrarre il codice OTP dal contenuto
-    // (placeholder: ritorna null per ora, così non rompe il flusso)
-    console.log('[Gmail] Email aperta, estrazione OTP da implementare.');
-    return null;
+    // --- ESTRAZIONE OTP ---
+    // Selettore generico del testo principale della mail (potrebbe bastare così)
+    // Se non va, usa i debug HTML per trovare un selettore più preciso.
+    const bodyText = await page.innerText('div[role="listitem"] div[dir="ltr"], div[role="list"] div[dir="ltr"]')
+      .catch(async () => {
+        // fallback: prendi tutto il testo della pagina
+        return await page.innerText('body');
+      });
+
+    console.log('[Gmail] Testo email letto, cerco OTP...');
+    const match = bodyText.match(/\b(\d{6})\b/); // 6 cifre
+    if (!match) {
+      console.log('[Gmail] Nessun codice OTP trovato nel testo email.');
+      await saveDebug(page, 'debug-gmail-07-no-otp');
+      return null;
+    }
+
+    const otp = match[1];
+    console.log('[Gmail] OTP estratta:', otp);
+    return otp;
   } catch (err) {
     console.error('[Gmail] Errore durante la lettura OTP:', err);
     await saveDebug(page, 'debug-gmail-error');
@@ -235,10 +248,26 @@ async function main() {
 
     const otp = await readOtpFromGmail(browser);
     if (!otp) {
-      console.log('OTP non letta (o lettura non ancora implementata), script terminato senza errore.');
+      console.log('OTP non letta, script terminato senza errore (controlla debug).');
     } else {
       console.log(`OTP letta da Gmail: ${otp}`);
-      // qui potresti tornare su We‑Wealth e inserirla se ti serve
+
+      // --- Inserimento OTP nella pagina We‑Wealth ---
+      await page.bringToFront();
+
+      // Adatta questi selettori al DOM reale del form OTP di We‑Wealth
+      const otpInput = page.locator('#otp-code, input[name="otp"], input[type="tel"]').first();
+      await otpInput.waitFor({ state: 'visible', timeout: 20000 });
+      await otpInput.fill(otp);
+      console.log('OTP inserita nel campo della pagina.');
+
+      const confermaBtn = page.locator('#otp-verify, button[type="submit"]').first();
+      await confermaBtn.waitFor({ state: 'visible', timeout: 20000 });
+      await confermaBtn.click();
+      console.log('Bottone conferma OTP cliccato.');
+
+      await wait(5000);
+      await saveDebug(page, 'debug-ww-06-after-otp');
     }
 
     console.log('Script completato con successo.');
