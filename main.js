@@ -247,6 +247,30 @@ async function sendSuccessEmail(screenshotPath) {
   console.log('[MAIL] Email inviata con screenshot allegato.');
 }
 
+async function waitForEitherRegistrationOrSuccess(page) {
+  for (let i = 0; i < 20; i++) {
+    const registrationVisible = await page
+      .locator('text=Create an account, text=Crea un account')
+      .first()
+      .isVisible()
+      .catch(() => false);
+
+    if (registrationVisible) return 'registration';
+
+    const successVisible =
+      await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
+      await page.locator('text=For registering').first().isVisible().catch(() => false) ||
+      await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
+      await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
+
+    if (successVisible) return 'success';
+
+    await wait(1500);
+  }
+
+  return 'unknown';
+}
+
 async function fillRegistrationForm(page) {
   console.log('[FORM] Attendo form di registrazione...');
 
@@ -270,61 +294,52 @@ async function fillRegistrationForm(page) {
 
   console.log(`[FORM] Nome compilato: ${firstName} ${lastName}`);
 
-  // Selezione tipo utente
   const privateBtn = page.getByRole('button', { name: /i am a private|privato/i }).first();
   if (await privateBtn.count()) {
     await privateBtn.click().catch(() => {});
     console.log('[FORM] Selezionato profilo private.');
   }
 
-  // Job position: tenta apertura select e sceglie prima opzione disponibile
-  const jobDropdown = page.locator('select:visible, [role="combobox"]:visible, .select-selected:visible').first();
-  if (await jobDropdown.count()) {
-    await jobDropdown.click().catch(() => {});
-    await wait(1000);
-
-    const firstOption = page.locator('option, [role="option"], .select-items div').nth(1);
-    if (await firstOption.count()) {
-      await firstOption.click().catch(() => {});
-      console.log('[FORM] Job position selezionata.');
-    }
-  }
-
-  // Newsletter daily
-  const dailyBtn = page.getByRole('button', { name: /daily/i }).first();
+  const dailyBtn = page.getByRole('button', { name: /daily|giornaliera/i }).first();
   if (await dailyBtn.count()) {
     await dailyBtn.click().catch(() => {});
-    console.log('[FORM] Newsletter daily selezionata.');
+    console.log('[FORM] Newsletter selezionata.');
   }
 
-  // Checkbox
   const checkboxes = page.locator('input[type="checkbox"]');
   const cbCount = await checkboxes.count();
+
   for (let i = 0; i < cbCount; i++) {
     const cb = checkboxes.nth(i);
     const checked = await cb.isChecked().catch(() => false);
     if (!checked) {
-      await cb.check().catch(() => {});
+      await cb.check().catch(async () => {
+        await cb.click({ force: true }).catch(() => {});
+      });
     }
   }
+
   console.log(`[FORM] Checkbox gestite: ${cbCount}`);
 
-  // Bottone finale
   const signUpBtn = page.getByRole('button', { name: /sign up|registrati/i }).first();
   await signUpBtn.waitFor({ state: 'visible', timeout: 20000 });
   await signUpBtn.click();
-  console.log('[FORM] Bottone finale SIGN UP cliccato.');
+  console.log('[FORM] Bottone finale SIGN UP / REGISTRATI cliccato.');
 }
 
 async function captureSuccessAndEmail(page) {
   console.log('[SUCCESS] Attendo schermata finale di conferma...');
 
-  await page.locator('text=Thank you, text=For registering, text=Registrazione confermata').first()
-    .waitFor({ state: 'visible', timeout: 30000 })
-    .catch(async () => {
-      await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first()
-        .waitFor({ state: 'visible', timeout: 30000 });
-    });
+  for (let i = 0; i < 20; i++) {
+    const ok =
+      await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
+      await page.locator('text=For registering').first().isVisible().catch(() => false) ||
+      await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
+      await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
+
+    if (ok) break;
+    await wait(1500);
+  }
 
   await wait(3000);
 
@@ -431,8 +446,13 @@ async function main() {
       await wait(2000);
       await saveDebug(page, 'debug-ww-06-after-otp');
 
-      await fillRegistrationForm(page);
-      await wait(3000);
+      const nextStep = await waitForEitherRegistrationOrSuccess(page);
+      console.log(`[FLOW] Step successivo rilevato: ${nextStep}`);
+
+      if (nextStep === 'registration') {
+        await fillRegistrationForm(page);
+        await wait(3000);
+      }
 
       await captureSuccessAndEmail(page);
     }
