@@ -20,11 +20,11 @@ function randomChoice(arr) {
 }
 
 function randomFirstName() {
-  return randomChoice(['Luca', 'Marco', 'Andrea', 'Paolo', 'Davide', 'Matteo']);
+  return randomChoice(['Riccardo', 'Luca', 'Marco', 'Andrea', 'Paolo', 'Davide', 'Matteo']);
 }
 
 function randomLastName() {
-  return randomChoice(['Rossi', 'Bianchi', 'Romano', 'Esposito', 'Ricci', 'Conti']);
+  return randomChoice(['Abrami', 'Rossi', 'Bianchi', 'Romano', 'Esposito', 'Ricci', 'Conti']);
 }
 
 async function saveDebug(page, name) {
@@ -156,7 +156,7 @@ async function readLatestOtpFromGmailIMAP(expectedEmail) {
           const fetch = imap.fetch(latestIds, { bodies: '' });
           const emails = [];
 
-          fetch.on('message', (msg, seqno) => {
+          fetch.on('message', (msg) => {
             let rawBuffer = '';
 
             msg.on('body', (stream) => {
@@ -167,7 +167,6 @@ async function readLatestOtpFromGmailIMAP(expectedEmail) {
 
             msg.once('attributes', (attrs) => {
               emails.push({
-                seqno,
                 raw: () => rawBuffer,
                 date: attrs.date || new Date(0)
               });
@@ -190,12 +189,13 @@ async function readLatestOtpFromGmailIMAP(expectedEmail) {
                 const html = typeof mail.html === 'string' ? mail.html : '';
                 const combined = `${subject}\n${text}\n${html}`;
 
+                const lower = combined.toLowerCase();
                 const isRelevant =
-                  combined.toLowerCase().includes('we-wealth') ||
-                  combined.toLowerCase().includes('wewealth') ||
-                  combined.toLowerCase().includes('otp') ||
-                  combined.toLowerCase().includes('codice') ||
-                  combined.toLowerCase().includes(expectedEmail.toLowerCase());
+                  lower.includes('we-wealth') ||
+                  lower.includes('wewealth') ||
+                  lower.includes('otp') ||
+                  lower.includes('codice') ||
+                  lower.includes(expectedEmail.toLowerCase());
 
                 if (!isRelevant) continue;
 
@@ -277,17 +277,11 @@ async function waitForEitherRegistrationOrSuccess(page) {
 
     if (fnameVisible || lnameVisible || signupVisible) return 'registration';
 
-    const greenCheckVisible = await page
-      .locator('img[src*="green-check.png"]')
-      .first()
-      .isVisible()
-      .catch(() => false);
-
+    const greenCheckVisible = await page.locator('img[src*="green-check.png"]').first().isVisible().catch(() => false);
     const successVisible =
       greenCheckVisible ||
       await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
       await page.locator('text=For registering').first().isVisible().catch(() => false) ||
-      await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
       await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
 
     if (successVisible) return 'success';
@@ -317,6 +311,34 @@ async function setCheckboxesViaJs(page) {
   console.log(`[FORM] Checkbox compilate. terms=${termsChecked} terms2=${terms2Checked} terms3=${terms3Checked}`);
 }
 
+async function clickRegisterButtonRobust(page) {
+  const signUpBtn = page.locator('#otp-register-start');
+
+  await signUpBtn.waitFor({ state: 'visible', timeout: 20000 });
+  await signUpBtn.scrollIntoViewIfNeeded().catch(() => {});
+  await wait(500);
+
+  await signUpBtn.click().catch(async () => {
+    await signUpBtn.click({ force: true }).catch(async () => {
+      await page.evaluate(() => {
+        const btn = document.querySelector('#otp-register-start');
+        if (btn) btn.click();
+      });
+    });
+  });
+
+  await page.evaluate(() => {
+    const btn = document.querySelector('#otp-register-start');
+    if (btn) {
+      btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+  }).catch(() => {});
+
+  console.log('[FORM] Bottone conferma registrazione cliccato.');
+}
+
 async function fillRegistrationForm(page) {
   console.log('[FORM] Attendo i campi reali del form...');
   await page.locator('#fname').waitFor({ state: 'visible', timeout: 30000 });
@@ -338,13 +360,11 @@ async function fillRegistrationForm(page) {
   const privateBtn = page.getByRole('button', { name: /i am a private|sono un privato|privato/i }).first();
   if (await privateBtn.isVisible().catch(() => false)) {
     await privateBtn.click({ force: true }).catch(() => {});
-    console.log('[FORM] Selezionato profilo private.');
   }
 
   const dailyBtn = page.getByRole('button', { name: /daily|giornaliera/i }).first();
   if (await dailyBtn.isVisible().catch(() => false)) {
     await dailyBtn.click({ force: true }).catch(() => {});
-    console.log('[FORM] Newsletter selezionata.');
   }
 
   await page.locator('#user_professione').selectOption({ label: 'Employee' }).catch(async () => {
@@ -355,31 +375,22 @@ async function fillRegistrationForm(page) {
   console.log('[FORM] Job position selezionata.');
 
   await setCheckboxesViaJs(page);
-
   await closePossibleOverlays(page);
   await wait(1000);
 
-  const signUpBtn = page.locator('#otp-register-start');
-  await signUpBtn.click({ force: true });
-  console.log('[FORM] Bottone conferma registrazione cliccato.');
+  await clickRegisterButtonRobust(page);
 
-  await wait(3000);
+  await wait(4000);
   await saveDebug(page, 'debug-ww-07b-after-signup-click');
 }
 
 async function waitForSuccessModal(page) {
   for (let i = 0; i < 25; i++) {
-    const greenCheckVisible = await page
-      .locator('img[src*="green-check.png"]')
-      .first()
-      .isVisible()
-      .catch(() => false);
-
+    const greenCheckVisible = await page.locator('img[src*="green-check.png"]').first().isVisible().catch(() => false);
     const successVisible =
       greenCheckVisible ||
       await page.locator('text=Thank you').first().isVisible().catch(() => false) ||
       await page.locator('text=For registering').first().isVisible().catch(() => false) ||
-      await page.locator('text=Welcome back to the We-Wealth World').first().isVisible().catch(() => false) ||
       await page.locator('button:has-text("COMPLETE"), button:has-text("CLOSE")').first().isVisible().catch(() => false);
 
     const formStillVisible =
