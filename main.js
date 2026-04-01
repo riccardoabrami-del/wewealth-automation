@@ -258,15 +258,49 @@ async function sendSuccessEmail(screenshotPath) {
     to: 'team-it@we-wealth.com',
     subject: 'Registrazione confermata',
     text: 'Registrazione confermata',
-    attachments: [
-      {
-        filename: 'registrazione-confermata.png',
-        path: screenshotPath
-      }
-    ]
+    attachments: screenshotPath
+      ? [
+          {
+            filename: 'registrazione-confermata.png',
+            path: screenshotPath
+          }
+        ]
+      : []
   });
 
   console.log('[MAIL] Email inviata con screenshot allegato.');
+}
+
+async function sendErrorEmail(screenshotPath, errorMessage) {
+  const { user, pass } = getGmailCreds();
+
+  if (!user || !pass) {
+    console.log('[MAIL-ERROR] Credenziali Gmail non presenti, salto invio email di errore.');
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass }
+  });
+
+  const attachments = [];
+  if (screenshotPath) {
+    attachments.push({
+      filename: 'errore-registrazione.png',
+      path: screenshotPath
+    });
+  }
+
+  await transporter.sendMail({
+    from: user,
+    to: 'milanotoonight@gmail.com',
+    subject: 'ERRORE registrazione WeWealth',
+    text: `Si è verificato un errore durante l\'automazione WeWealth:\n\n${errorMessage || 'Errore sconosciuto.'}`,
+    attachments
+  });
+
+  console.log('[MAIL-ERROR] Email di errore inviata.');
 }
 
 async function waitForEitherRegistrationOrSuccess(page) {
@@ -467,6 +501,14 @@ async function main() {
     await wait(3000);
     await saveDebug(page, 'debug-ww-03-after-accedi');
 
+    // *** ERRORE VOLUTO: simuliamo che il bottone OTP non esista ***
+    const otpButtonExists = await page.locator('#otp-submit-button').first().isVisible().catch(() => false);
+    if (!otpButtonExists) {
+      throw new Error('ERRORE DI TEST: bottone #otp-submit-button (invia OTP) non trovato.');
+    }
+
+    // Se vuoi togliere l’errore in futuro, commenta il blocco sopra e usa il codice originale sotto.
+    /*
     const preEmailClicked = await jsClick(page, '#otp-submit-button');
     if (preEmailClicked) {
       console.log('Bottone otp-submit-button cliccato.');
@@ -479,7 +521,9 @@ async function main() {
         console.log('otp-submit-button non trovato, procedo.');
       }
     }
+    */
 
+    // Da qui in giù non verrà eseguito finché c’è l’errore sopra
     await wait(3000);
     await saveDebug(page, 'debug-ww-04-before-email');
 
@@ -538,7 +582,16 @@ async function main() {
     console.log('Script completato con successo.');
   } catch (error) {
     console.error('Errore durante esecuzione:', error);
+
+    let errorShot = '';
+    try {
+      errorShot = 'errore-registrazione.png';
+      await page.screenshot({ path: errorShot, fullPage: true });
+    } catch (_) {}
+
     await saveDebug(page, 'debug-error');
+    await sendErrorEmail(errorShot, error?.message || String(error));
+
     process.exitCode = 1;
   } finally {
     await browser.close();
