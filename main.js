@@ -255,7 +255,7 @@ async function sendSuccessEmail(screenshotPath) {
 
   await transporter.sendMail({
     from: user,
-    to: 'milanotoonight@gmail.com',
+    to: 'team-it@we-wealth.com',
     subject: 'Registrazione confermata',
     text: 'Registrazione confermata',
     attachments: [
