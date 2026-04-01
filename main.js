@@ -258,19 +258,18 @@ async function sendSuccessEmail(screenshotPath) {
     to: 'team-it@we-wealth.com',
     subject: 'Registrazione confermata',
     text: 'Registrazione confermata',
-    attachments: screenshotPath
-      ? [
-          {
-            filename: 'registrazione-confermata.png',
-            path: screenshotPath
-          }
-        ]
-      : []
+    attachments: [
+      {
+        filename: 'registrazione-confermata.png',
+        path: screenshotPath
+      }
+    ]
   });
 
   console.log('[MAIL] Email inviata con screenshot allegato.');
 }
 
+// --- NUOVA FUNZIONE: invio email errore ---
 async function sendErrorEmail(screenshotPath, errorMessage) {
   const { user, pass } = getGmailCreds();
 
@@ -294,9 +293,9 @@ async function sendErrorEmail(screenshotPath, errorMessage) {
 
   await transporter.sendMail({
     from: user,
-    to: 'milanotoonight@gmail.com',
-    subject: 'ERRORE registrazione WeWealth',
-    text: `Si è verificato un errore durante l\'automazione WeWealth:\n\n${errorMessage || 'Errore sconosciuto.'}`,
+    to: 'team-it@we-wealth.com',
+    subject: 'Errore completamento registrazione',
+    text: `Si è verificato un errore durante il completamento della registrazione:\n\n${errorMessage || 'Errore sconosciuto.'}`,
     attachments
   });
 
@@ -501,14 +500,6 @@ async function main() {
     await wait(3000);
     await saveDebug(page, 'debug-ww-03-after-accedi');
 
-    // *** ERRORE VOLUTO: simuliamo che il bottone OTP non esista ***
-    const otpButtonExists = await page.locator('#otp-submit-button').first().isVisible().catch(() => false);
-    if (!otpButtonExists) {
-      throw new Error('ERRORE DI TEST: bottone #otp-submit-button (invia OTP) non trovato.');
-    }
-
-    // Se vuoi togliere l’errore in futuro, commenta il blocco sopra e usa il codice originale sotto.
-    /*
     const preEmailClicked = await jsClick(page, '#otp-submit-button');
     if (preEmailClicked) {
       console.log('Bottone otp-submit-button cliccato.');
@@ -521,9 +512,7 @@ async function main() {
         console.log('otp-submit-button non trovato, procedo.');
       }
     }
-    */
 
-    // Da qui in giù non verrà eseguito finché c’è l’errore sopra
     await wait(3000);
     await saveDebug(page, 'debug-ww-04-before-email');
 
